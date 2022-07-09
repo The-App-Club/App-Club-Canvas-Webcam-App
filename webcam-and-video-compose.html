@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <title>
+      video and webcam compose
+    </title>
+    <style>
+      *,
+      :after,
+      :before {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      .content {
+        position: relative;
+        display: flex;
+        justify-content: space-evenly;
+        padding: 10rem;
+        height: 100%;
+        width: 100vw;
+      }
+
+      video {
+        display: block;
+        max-width: 100%;
+        max-height: 100%;
+        outline: none;
+        margin: 0 auto;
+      }
+
+      canvas {
+        display: block;
+        margin: 0 auto;
+      }
+
+      .area {
+        position: relative;
+        height: 100%;
+        width: 100%;
+        padding: 1rem;
+        border: 1px solid;
+      }
+
+      .parent {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        grid-template-rows: repeat(4, 1fr);
+        grid-column-gap: 0px;
+        grid-row-gap: 0px;
+      }
+
+      .div1 {
+        grid-area: 1 / 1 / 3 / 3;
+      }
+      .div2 {
+        grid-area: 1 / 3 / 3 / 5;
+      }
+      .div3 {
+        grid-area: 3 / 1 / 5 / 3;
+      }
+      .div4 {
+        grid-area: 3 / 3 / 5 / 5;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="controller">
+        <button class="record-start">record start</button>
+        <button class="record-stop">record stop</button>
+        <button class="record-download">download</button>
+      </div>
+      <div class="parent">
+        <div class="area div1 camera-area">
+          <video src="" autoplay controls class="webcamera"></video>
+        </div>
+        <div class="area div2 video-area">
+          <video src="sample_00.webm" controls class="original"></video>
+        </div>
+        <div class="area div3 canvas-area">
+          <canvas class="reflector"></canvas>
+        </div>
+        <div class="area div4 compose-area">
+          <video class="compose" autoplay controls></video>
+        </div>
+      </div>
+    </div>
+    <script>
+      const webcameraVideoDom = document.querySelector("video.webcamera");
+      const originalVideoDom = document.querySelector("video.original");
+      const composeVideoDom = document.querySelector("video.compose");
+      const reflectorCanvasDom = document.querySelector("canvas.reflector");
+      const recordStartButtonDom = document.querySelector(
+        "button.record-start"
+      );
+      const recordStopButtonDom = document.querySelector("button.record-stop");
+      const recordDownloadButtonDom = document.querySelector(
+        "button.record-download"
+      );
+
+      let audioContext;
+      let webCameraStream;
+      let mediaStream;
+      let mediaRecoder;
+      let audioStream;
+      let mediaConstraints = {
+        video: { frameRate: { ideal: 10, max: 15 } },
+        audio: { echoCancellation: true },
+      };
+      navigator.getUserMedia(
+        mediaConstraints,
+        callbackGetUserMediaSuccess,
+        callbackGetUserMediaFail
+      );
+
+      function setUpSize(event) {
+        reflectorCanvasDom.height = originalVideoDom.videoHeight;
+        reflectorCanvasDom.width = originalVideoDom.videoWidth;
+        composeVideoDom.height = originalVideoDom.videoHeight;
+        composeVideoDom.width = originalVideoDom.videoWidth;
+        webcameraVideoDom.height = originalVideoDom.videoHeight;
+        webcameraVideoDom.width = originalVideoDom.videoWidth;
+      }
+
+      function reflectVideo2Canvas() {
+        const reflectorCanvasDomContext = reflectorCanvasDom.getContext("2d");
+        reflectorCanvasDomContext.drawImage(originalVideoDom, 0, 0);
+        reflectorCanvasDomContext.drawImage(
+          webcameraVideoDom,
+          0,
+          0,
+          originalVideoDom.videoWidth,
+          originalVideoDom.videoHeight,
+          10,
+          10,
+          160,
+          120
+        );
+        requestAnimationFrame(reflectVideo2Canvas);
+      }
+
+      function callbackGetUserMediaSuccess(event) {
+        const webcameraVideoDom = document.querySelector("video.webcamera");
+        webcameraVideoDom.srcObject = event;
+        webCameraStream = event;
+      }
+
+      function callbackGetUserMediaFail(event) {
+        console.log(event);
+      }
+
+      function getAudioStream() {
+        audioContext = new AudioContext();
+        // https://developers.google.com/web/fundamentals/media/recording-audio/
+        // https://developers.google.com/web/fundamentals/media/recording-video
+        // https://developers.google.com/web/fundamentals/media/capturing-images
+        const originalVideoDom = document.querySelector("video.original");
+        let videoMediaSource =
+          audioContext.createMediaElementSource(originalVideoDom);
+        let webCameraSource =
+          audioContext.createMediaStreamSource(webCameraStream);
+        let splitter = audioContext.createChannelSplitter(2);
+        videoMediaSource.connect(splitter);
+        let splitter2 = audioContext.createChannelSplitter(2);
+        webCameraSource.connect(splitter2);
+        let videoGainNode = audioContext.createGain();
+        let cameraGainNode = audioContext.createGain();
+        videoGainNode.gain.value = 1;
+        cameraGainNode.gain.value = 1;
+        splitter.connect(videoGainNode);
+        splitter2.connect(cameraGainNode);
+        let merger = audioContext.createChannelMerger(4);
+        videoGainNode.connect(merger, 0, 0);
+        cameraGainNode.connect(merger, 0, 0);
+        videoGainNode.connect(audioContext.destination);
+        let distSource = audioContext.createMediaStreamDestination();
+        merger.connect(distSource);
+        return distSource.stream;
+      }
+
+      function startRecording(event) {
+        originalVideoDom.play();
+        mediaStream = new MediaStream();
+        mediaStream.addTrack(reflectorCanvasDom.captureStream().getTracks()[0]);
+        mediaStream.addTrack(audioStream.getAudioTracks()[0]);
+        mediaRecoder = new MediaRecorder(mediaStream);
+        mediaRecoder.start();
+        mediaRecoder.ondataavailable = (event) => {
+          console.log("ondataavailable", event);
+          const blobURL = URL.createObjectURL(event.data);
+          composeVideoDom.src = blobURL;
+        };
+      }
+
+      function stopRecording(event) {
+        if (!mediaRecoder) {
+          return;
+        }
+        if (mediaRecoder && !originalVideoDom.paused) {
+          originalVideoDom.pause();
+          mediaRecoder.stop();
+        }
+      }
+
+      function downloader(event) {
+        // https://stackoverflow.com/questions/42901942/how-do-we-download-a-blob-url-video
+        // https://www.videoconverterfactory.com/tips/download-blob-videos.html
+        // blob URL形式の videoは 簡単にできないらしい
+        // https://stackoverflow.com/questions/21192713/how-to-playback-mkv-video-in-web-browser
+        // https://cloudconvert.com/mkv-to-mp4
+        // 以下のサイトで mkv から mp4 に変換できた
+        // サブスクしてAPI叩けば自動化できそう
+        // 自動化するにはここがネックになりそう
+      }
+
+      recordStartButtonDom.addEventListener(
+        "click",
+        (event) => {
+          audioStream = getAudioStream(event);
+          console.log(audioStream);
+          startRecording(event);
+        },
+        false
+      );
+
+      originalVideoDom.addEventListener(
+        "loadeddata",
+        (event) => {
+          setUpSize(event);
+        },
+        false
+      );
+      requestAnimationFrame(reflectVideo2Canvas);
+
+      recordStopButtonDom.addEventListener(
+        "click",
+        (event) => {
+          stopRecording(event);
+        },
+        false
+      );
+
+      recordDownloadButtonDom.addEventListener(
+        "click",
+        (event) => {
+          downloader(event);
+        },
+        false
+      );
+    </script>
+  </body>
+</html>
